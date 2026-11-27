@@ -86,16 +86,18 @@ SEEDS = {
         "ask questions early: being stuck for hours costs more than asking",
     ],
     "FUNNY": [
-        "AI writes the code, you debug it",
-        "'it works on my machine'",
+        "AI writes the code, you debug it, and your manager credits the AI",
+        "'it works on my machine' and the pain of whoever has to deploy it",
         "AI confidently using a library that does not exist",
-        "the five stages of debugging",
-        "reading your own code from six months ago",
-        "tutorial hell versus actually building something",
-        "naming a variable is the hardest problem in computer science",
-        "git commit messages at 2am",
-        "prompt engineering is just asking clearly, but with more steps",
-        "the demo that worked perfectly until the meeting started",
+        "a mock job posting: entry level, 5 years of experience, unpaid-feeling salary",
+        "a mock press release for a startup that added 'AI' to its name",
+        "the meeting that could have been an email, as seen by the engineers in it",
+        "the intern's first day versus the codebase nobody dares touch",
+        "'quick fix' estimates versus what actually happens",
+        "the demo that worked perfectly until the client joined",
+        "prompt engineering is just asking clearly, but with more steps and a bigger title",
+        "performance review season for people whose work is mostly invisible",
+        "the on-call engineer at 3am versus the person who pushed on Friday",
     ],
     "TIP": [
         "a git habit that saves you from losing work",
@@ -284,7 +286,8 @@ everyday words.
 HARD RULES
 - Never invent facts, numbers, quotes, projects, jobs or personal experiences. Do not write
   "I built / I worked at / my manager". Only use facts given to you or well-established
-  common knowledge. Exception: FUNNY posts may use generic relatable "me:" humour.
+  common knowledge. Exception: FUNNY posts may use satire, exaggeration and generic
+  relatable "me:" humour (clearly jokes, never presented as real events).
 - First line (the hook) is at most 12 words and makes someone stop scrolling: a surprising
   fact, a contrast, or a sharp question. Never open with "In today's...", "Excited to share",
   "Let's dive in", "Did you know".
@@ -418,10 +421,16 @@ def write_post(mode, model):
             "MOTIVATION": "Write an honest motivational post for students and early-career "
                           "people. No fake success stories; use a universal observation or a "
                           "simple analogy. Practical, not preachy.",
-            "FUNNY": "Write a genuinely funny, relatable developer/AI joke post: a tight "
-                     "setup and punchline format (e.g. 'Me: ... / AI: ...' or a numbered "
-                     "list of 4-5 short items). Clean humour, no insults, still professional "
-                     "enough for LinkedIn. Keep it under 700 characters.",
+            "FUNNY": "Write a satirical, dry-humoured post in the style of a witty tech/work "
+                     "columnist. Lean into other people's pain: the suffering of interns, "
+                     "junior devs, managers stuck in meetings, QA, HR emails, and anyone "
+                     "trapped in corporate or AI-hype culture. Use a tight format (e.g. "
+                     "'Me: ... / Reality: ...', a mock job posting, a mock press release, "
+                     "or a numbered list of 4-5 painfully accurate items). Exaggerate "
+                     "situations, buzzwords and trends, never real named people, companies "
+                     "or groups of people. Biting but not cruel, and nothing that would "
+                     "embarrass the poster in front of a recruiter. Under 700 characters. "
+                     "End with a question that makes people share their own pain.",
             "TIP": "Write a practical, correct tip a beginner can use today. Include a tiny "
                    "concrete example (a command or one line of code) written in plain text. "
                    "Only state things you are sure are true.",
