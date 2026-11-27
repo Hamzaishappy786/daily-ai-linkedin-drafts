@@ -14,6 +14,7 @@ Env vars:
   DRY_RUN=1           print instead of emailing
 """
 import datetime as dt
+import html as html_lib
 import json
 import os
 import random
@@ -37,6 +38,9 @@ UA = "daily-ai-post-bot/3.0"
 BROWSER_UA = "Mozilla/5.0 (compatible; daily-ai-post-bot/3.0)"
 TODAY = dt.date.today()
 DAY = TODAY.toordinal()
+# Two runs a day (04:00 and 14:00 UTC): SLOT differs between them so the morning and
+# evening emails don't pick the same quote or topic.
+SLOT = DAY * 2 + (1 if dt.datetime.now(dt.timezone.utc).hour >= 9 else 0)
 try:  # how many drafts per email (default 2; set via the manual "Run workflow" form)
     POST_COUNT = max(1, min(6, int(os.environ.get("POST_COUNT") or 2)))
 except ValueError:
@@ -283,6 +287,18 @@ VOICE: friendly, confident, plain English, like a sharp friend explaining someth
 Professional, never corporate or cringe. Short sentences. Explain anything technical in
 everyday words.
 
+BE CRITICAL, NOT A GENERIC AI. Most LinkedIn posts are forgettable filler. Yours must not be.
+- SPECIFICITY TEST: every line must carry something concrete (a number, a name, a tool, a
+  command, a real trade-off, a vivid everyday situation). If a line could be pasted under
+  any other post, delete it.
+- Take a stance or give a non-obvious insight. Do not just report or summarise. Name the
+  catch, the limit, or who it does NOT help.
+- What performs on LinkedIn: a hook with a concrete number or a contrast ("X cost $Y, now Z");
+  one clear point per post; short lines; a stance people can agree or argue with; a closing
+  question that a reader can answer in one sentence from their own work or study life.
+- What flops: motivational fluff, "consistency is key", listicles of obvious advice, vague
+  hype, a generic "thoughts?" ending.
+
 HARD RULES
 - Never invent facts, numbers, quotes, projects, jobs or personal experiences. Do not write
   "I built / I worked at / my manager". Only use facts given to you or well-established
@@ -291,8 +307,9 @@ HARD RULES
 - First line (the hook) is at most 12 words and makes someone stop scrolling: a surprising
   fact, a contrast, or a sharp question. Never open with "In today's...", "Excited to share",
   "Let's dive in", "Did you know".
-- Banned words: game-changer, revolutionary, unlock, delve, landscape, leverage, journey,
-  "in the world of".
+- Banned words/phrases: game-changer, revolutionary, unlock, delve, landscape, leverage,
+  journey, "in the world of", "consistency is key", "stay curious", "keep learning",
+  "the future of", "whether you're a", "it's important to", "at the end of the day".
 - Layout: one idea per line, blank line between blocks, 700-1100 characters total, no em
   dashes, at most 2 emojis, no bullet spam (max 4 bullets).
 - End with ONE specific question that invites replies (not "thoughts?"), then a final line
@@ -322,14 +339,15 @@ def resolve_model():
     return sorted(chat)[0]
 
 
-def call_groq(model, task, temperature=0.8):
+def call_groq(model, task, temperature=0.8, schema=None):
+    schema = schema or SCHEMA
     last_err = None
     for attempt in range(4):
         strict = attempt < 3  # final attempt: no strict JSON mode, extract JSON ourselves
         payload = {
             "model": model, "temperature": temperature, "max_completion_tokens": 4096,
             "messages": [{"role": "system", "content": STYLE},
-                         {"role": "user", "content": task + "\n\nReturn JSON: " + SCHEMA}],
+                         {"role": "user", "content": task + "\n\nReturn JSON: " + schema}],
         }
         if strict:
             payload["response_format"] = {"type": "json_object"}
@@ -358,6 +376,57 @@ def call_groq(model, task, temperature=0.8):
             last_err = f"Bad JSON from model: {e}"
             time.sleep(2)
     raise RuntimeError(last_err)
+
+
+# ------------------------------------------------------- critique / rewrite pass
+def article_text(url, limit=3500):
+    """Plain text of the article's paragraphs, so the editor can use real specifics."""
+    if not url:
+        return ""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            raw = r.read(500_000).decode("utf-8", "replace")
+    except Exception:
+        return ""
+    raw = re.sub(r"(?is)<(script|style|noscript|nav|footer|header)[^>]*>.*?</\1>", " ", raw)
+    paras = re.findall(r"(?is)<p[^>]*>(.*?)</p>", raw)
+    text = html_lib.unescape(" ".join(_strip(p) for p in paras))
+    return text[:limit] if len(text) > 400 else ""
+
+
+def refine(model, mode, draft, facts):
+    """Second pass: a ruthless editor removes generic filler and adds real specifics."""
+    if facts:
+        facts_rule = ("ARTICLE TEXT is provided below. Pull the specifics ONLY from it: exact "
+                      "numbers, names, what was actually done, limits and caveats. Never add "
+                      "a fact that is not in it.\n\nARTICLE TEXT:\n" + facts)
+    else:
+        facts_rule = ("No source text is available, so add NO new facts or statistics. Make it "
+                      "specific through concrete examples instead: real commands for a TIP, a "
+                      "vivid everyday scenario written as 'you' (not claimed as a real event) "
+                      "for MOTIVATION, sharper wording for the rest.")
+    task = (
+        f"You are a ruthless LinkedIn editor who hates generic, AI-sounding posts. Below is a "
+        f"DRAFT ({mode} mode). Rewrite it:\n"
+        "1. Delete or replace every line that could appear under any other post.\n"
+        "2. Every remaining line must carry something concrete (number, name, example, "
+        "trade-off, situation).\n"
+        "3. Take a clear stance or surface a non-obvious insight; name the catch or who it "
+        "does not help.\n"
+        "4. Make the hook specific (a concrete number or contrast), not a generic question.\n"
+        "5. Make the closing question answerable in one sentence from the reader's own "
+        "work or study life.\n"
+        "6. Keep the layout rules, 600-1100 characters, the source URL line and the "
+        "hashtags. Keep quotes and jokes intact if the draft has them.\n"
+        f"{facts_rule}\n\nDRAFT:\n{draft}")
+    try:
+        r = call_groq(model, task, temperature=0.6, schema='{"post": "<the rewritten post>"}')
+        new = (r.get("post") or "").strip()
+        return new if len(new) > 200 else draft
+    except Exception as ex:
+        print(f"[warn] refine failed, keeping first draft: {ex}", file=sys.stderr)
+        return draft
 
 
 # -------------------------------------------------------------- mode writers
@@ -405,7 +474,7 @@ def write_post(mode, model):
             f"it was (current year is {TODAY.year}). Use only the facts given. Put the "
             "source URL on its own line.\n\nITEMS:\n" + json.dumps(hist, ensure_ascii=False))
     elif mode == "QUOTE":
-        quote = QUOTES[DAY % len(QUOTES)]
+        quote = QUOTES[SLOT % len(QUOTES)]
         image_page = f"https://en.wikipedia.org/wiki/{quote[2]}" if quote[2] else ""
         task = (
             f'MODE: QUOTE. Quote: "{quote[0]}" by {quote[1]}.\n'
@@ -416,7 +485,7 @@ def write_post(mode, model):
             "or AI if the quote itself is about technology. Do not claim the author said "
             "anything beyond this quote.")
     else:
-        seed = SEEDS[mode][DAY % len(SEEDS[mode])]
+        seed = SEEDS[mode][SLOT % len(SEEDS[mode])]
         extra = {
             "MOTIVATION": "Write an honest motivational post for students and early-career "
                           "people. No fake success stories; use a universal observation or a "
@@ -450,7 +519,9 @@ def write_post(mode, model):
     src = r.get("source_url", "") or ""
     if mode in ("NEWS", "HISTORY"):
         image_page = src
-    return {"mode": mode, "headline": r.get("headline", mode), "post": r["post"].strip(),
+    facts = article_text(src) if mode in ("NEWS", "HISTORY") and src else ""
+    post = refine(model, mode, r["post"].strip(), facts)
+    return {"mode": mode, "headline": r.get("headline", mode), "post": post,
             "source_url": src, "image_page": image_page}
 
 

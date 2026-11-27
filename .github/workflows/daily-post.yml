@@ -2,7 +2,8 @@ name: Daily AI LinkedIn draft
 
 on:
   schedule:
-    # GitHub cron is UTC. 14:00 UTC = 19:00 PKT (7pm). Change if you're elsewhere.
+    # GitHub cron is UTC. 04:00 UTC = 9am PKT, 14:00 UTC = 7pm PKT. Change if elsewhere.
+    - cron: "0 4 * * *"
     - cron: "0 14 * * *"
   workflow_dispatch: # press "Run workflow" manually to get more drafts
     inputs:

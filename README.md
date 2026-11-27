@@ -1,8 +1,9 @@
 # Daily LinkedIn drafts (emailed to you)
 
-Every day at 7pm PKT, GitHub Actions runs `scripts/daily_post.py`. It picks random content
-modes, has Groq write a LinkedIn post for each, and emails you the best two (PRIMARY + BACKUP).
-You copy, check, post.
+Twice a day, at 9am and 7pm PKT, GitHub Actions runs `scripts/daily_post.py`. It picks random
+content modes, has Groq write a LinkedIn post for each, runs a ruthless "editor" rewrite pass
+(removes generic filler, adds real specifics pulled from the article text), and emails you the
+best two (PRIMARY + BACKUP). You copy, check, post.
 
 ## Modes (random, weighted)
 
@@ -34,7 +35,9 @@ Test: Actions tab -> "Daily AI LinkedIn draft" -> Run workflow.
 - Voice and banned words: `STYLE`. News strictness: the NEWS task text and the `appeal` threshold (7).
 - News sources: `RSS_FEEDS` and the `from_*` functions.
 - Test one mode: add `FORCE_MODE: "QUOTE"` under `env:` in the workflow, then Run workflow.
-- Cron is UTC (`0 14 * * *` = 7pm PKT). GitHub may delay runs 5-30 minutes.
+- Cron is UTC (`0 4 * * *` = 9am PKT, `0 14 * * *` = 7pm PKT). GitHub may delay runs 5-30 minutes.
+- The script cannot read LinkedIn (it blocks bots). "What works on LinkedIn" is built into the
+  `STYLE` prompt instead; edit it as you learn what your audience likes.
 - GitHub disables scheduled workflows after 60 days without repo activity; click
   "Enable workflow" if emails stop.
 
