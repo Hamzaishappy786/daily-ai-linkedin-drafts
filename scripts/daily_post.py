@@ -36,8 +36,12 @@ UA = "daily-ai-post-bot/1.0"
 
 def get_json(url, timeout=20):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:400].replace("\n", " ")
+        raise RuntimeError(f"HTTP {e.code}: {detail}") from None
 
 
 # ---------------------------------------------------------------- collectors
