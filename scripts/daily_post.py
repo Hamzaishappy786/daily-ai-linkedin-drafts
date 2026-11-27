@@ -26,7 +26,10 @@ import urllib.parse
 import urllib.request
 from email.message import EmailMessage
 
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+MODEL = os.environ.get("GROQ_MODEL")  # optional override; auto-picked if unset
+PREFERRED = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b",
+             "llama-3.1-8b-instant"]
+NOT_CHAT = ("whisper", "guard", "tts", "orpheus", "embed", "prompt-guard", "safeguard")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 UA = "daily-ai-post-bot/1.0"
 
@@ -167,9 +170,27 @@ For history_post pick the most interesting tech/computing/AI-related "on this da
 (prefer one that connects to today's AI world) and write it as a fun 'On this day' post."""
 
 
-def call_groq(user_msg):
+def resolve_model():
+    """Pick a chat model this key can actually use (Groq retires models often)."""
+    if MODEL:
+        return MODEL
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/models",
+        headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}", "User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        ids = [m["id"] for m in json.load(r)["data"]]
+    for p in PREFERRED:
+        if p in ids:
+            return p
+    chat = [i for i in ids if not any(x in i for x in NOT_CHAT)]
+    if not chat:
+        raise RuntimeError(f"No chat model available. Models seen: {ids}")
+    return sorted(chat)[0]
+
+
+def call_groq(user_msg, model):
     body = json.dumps({
-        "model": MODEL,
+        "model": model,
         "temperature": 0.6,
         "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": SYSTEM},
@@ -242,7 +263,9 @@ def main():
     user_msg = (f"Today is {today:%d %B %Y}.\n\nNEWS ITEMS (last ~24h):\n"
                 + json.dumps(news, ensure_ascii=False)
                 + "\n\nON THIS DAY CANDIDATES:\n" + json.dumps(history, ensure_ascii=False))
-    result = call_groq(user_msg)
+    model = resolve_model()
+    print("Using Groq model:", model)
+    result = call_groq(user_msg, model)
     subject, body = build_email(result, today, images)
 
     if DRY_RUN:
