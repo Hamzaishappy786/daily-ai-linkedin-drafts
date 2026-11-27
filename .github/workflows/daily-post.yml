@@ -1,0 +1,30 @@
+name: Daily AI LinkedIn draft
+
+on:
+  schedule:
+    # GitHub cron is UTC. 14:00 UTC = 19:00 PKT (7pm). Change if you're elsewhere.
+    - cron: "0 14 * * *"
+  workflow_dispatch: # lets you press "Run workflow" manually to test
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate drafts and email them
+        run: python scripts/daily_post.py
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          # Optional (Instagram via Google). Leave the secrets unset to skip it.
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_CSE_ID: ${{ secrets.GOOGLE_CSE_ID }}
