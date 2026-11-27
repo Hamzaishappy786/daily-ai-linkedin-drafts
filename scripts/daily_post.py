@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """Daily LinkedIn draft emailer.
 
-Every run picks a few random content "modes" (news, tip, quote, funny, motivation,
-tech history), has Groq write a LinkedIn post for each, renders an image card where it
-helps, and emails you the best two. You copy-paste and post.
+Every run picks random content "modes" (news, tip, quote, funny, motivation, tech history),
+has Groq write a LinkedIn post for each, grabs a REAL image from the source where one
+exists, and emails you the best two. You copy-paste and post. Stdlib only.
 
 Env vars:
   GROQ_API_KEY        (required)
   EMAIL_USER, EMAIL_APP_PASSWORD   Gmail sender + app password (unless DRY_RUN)
   EMAIL_TO            recipient, defaults to EMAIL_USER
   GROQ_MODEL          optional model override (auto-picked otherwise)
-  CARD_FOOTER         optional text at the bottom of image cards, e.g. your name
   FORCE_MODE          optional: NEWS|TIP|QUOTE|FUNNY|MOTIVATION|HISTORY (for testing)
-  DRY_RUN=1           print instead of emailing; saves cards as dryrun_*.png
+  DRY_RUN=1           print instead of emailing
 """
 import datetime as dt
-import io
 import json
 import os
 import random
+import re
 import smtplib
 import ssl
 import sys
@@ -26,6 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from email.message import EmailMessage
 
 MODEL = os.environ.get("GROQ_MODEL")
@@ -33,34 +33,43 @@ PREFERRED = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-2
              "llama-3.1-8b-instant"]
 NOT_CHAT = ("whisper", "guard", "tts", "orpheus", "embed", "safeguard")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
-UA = "daily-ai-post-bot/2.0"
+UA = "daily-ai-post-bot/3.0"
+BROWSER_UA = "Mozilla/5.0 (compatible; daily-ai-post-bot/3.0)"
 TODAY = dt.date.today()
 DAY = TODAY.toordinal()
+try:  # how many drafts per email (default 2; set via the manual "Run workflow" form)
+    POST_COUNT = max(1, min(6, int(os.environ.get("POST_COUNT") or 2)))
+except ValueError:
+    POST_COUNT = 2
 
 # ------------------------------------------------------------- static content
-# Verified, well-known quotes. The model never invents a quote; it only writes around these.
-QUOTES = [
-    ("Talk is cheap. Show me the code.", "Linus Torvalds"),
-    ("Premature optimization is the root of all evil.", "Donald Knuth"),
-    ("Simplicity is prerequisite for reliability.", "Edsger W. Dijkstra"),
-    ("The only way to learn a new programming language is by writing programs in it.",
-     "Dennis Ritchie"),
+# (quote, author, Wikipedia page for the author's photo or None).
+# Real, well-known quotes. The model never invents a quote; it only writes around these.
+QUOTES = [  # mix of general work/life quotes (most) and a few tech ones
+    ("The only way to do great work is to love what you do.", "Steve Jobs", "Steve_Jobs"),
+    ("Talk is cheap. Show me the code.", "Linus Torvalds", "Linus_Torvalds"),
+    ("You miss 100% of the shots you don't take.", "Wayne Gretzky", "Wayne_Gretzky"),
+    ("Well done is better than well said.", "Benjamin Franklin", "Benjamin_Franklin"),
+    ("A ship in port is safe, but that's not what ships are built for.", "Grace Hopper",
+     "Grace_Hopper"),
+    ("We are what we repeatedly do. Excellence, then, is not an act, but a habit.",
+     "Will Durant", "Will_Durant"),
+    ("Genius is one percent inspiration, ninety-nine percent perspiration.",
+     "Thomas Edison", "Thomas_Edison"),
+    ("The best way to predict the future is to invent it.", "Alan Kay", "Alan_Kay"),
+    ("I have no special talent. I am only passionately curious.", "Albert Einstein",
+     "Albert_Einstein"),
+    ("If you want to go fast, go alone. If you want to go far, go together.",
+     "African proverb", None),
     ("We can only see a short distance ahead, but we can see plenty there that needs to be done.",
-     "Alan Turing"),
-    ("Debugging is twice as hard as writing the code in the first place. Therefore, if you "
-     "write the code as cleverly as possible, you are, by definition, not smart enough to debug it.",
-     "Brian Kernighan"),
-    ("The best way to predict the future is to invent it.", "Alan Kay"),
-    ("Make it work, make it right, make it fast.", "Kent Beck"),
-    ("Programs must be written for people to read, and only incidentally for machines to execute.",
-     "Abelson & Sussman, SICP"),
-    ("Any sufficiently advanced technology is indistinguishable from magic.", "Arthur C. Clarke"),
-    ("The cheapest, fastest, and most reliable components are those that aren't there.",
-     "Gordon Bell"),
-    ("A ship in port is safe, but that's not what ships are built for.", "Grace Hopper"),
-    ("The real problem is not whether machines think but whether men do.", "B. F. Skinner"),
+     "Alan Turing", "Alan_Turing"),
+    ("The best way out is always through.", "Robert Frost", "Robert_Frost"),
+    ("Fall seven times, stand up eight.", "Japanese proverb", None),
+    ("The real problem is not whether machines think but whether men do.", "B. F. Skinner",
+     "B._F._Skinner"),
+    ("A smooth sea never made a skilled sailor.", "English proverb", None),
     ("The Analytical Engine has no pretensions whatever to originate anything. It can do "
-     "whatever we know how to order it to perform.", "Ada Lovelace, 1843"),
+     "whatever we know how to order it to perform.", "Ada Lovelace, 1843", "Ada_Lovelace"),
 ]
 
 SEEDS = {
@@ -90,19 +99,18 @@ SEEDS = {
     ],
     "TIP": [
         "a git habit that saves you from losing work",
-        "a prompting trick to get better code out of an LLM",
+        "a prompting trick to get better answers out of ChatGPT-style tools",
         "rubber duck debugging: explain the problem out loud",
-        "reading a stack trace from the bottom up",
-        "how to run a small LLM locally with Ollama",
-        "a free resource for learning ML fundamentals",
+        "reading an error message from the bottom up",
+        "how to run a small AI model on your own laptop with Ollama",
+        "a free resource for learning how AI actually works",
         "a GitHub profile README that recruiters actually notice",
         "writing a good commit message",
         "a Python standard-library module most beginners miss",
         "how to ask a technical question so people actually answer",
     ],
 }
-WEIGHTS = {"NEWS": 30, "TIP": 16, "QUOTE": 16, "FUNNY": 16, "MOTIVATION": 12, "HISTORY": 10}
-NEEDS_CARD = {"QUOTE", "FUNNY", "MOTIVATION", "TIP"}
+WEIGHTS = {"NEWS": 24, "TIP": 18, "QUOTE": 16, "FUNNY": 16, "MOTIVATION": 14, "HISTORY": 12}
 
 
 def get_json(url, timeout=20, headers=None):
@@ -119,28 +127,28 @@ def get_json(url, timeout=20, headers=None):
 def from_hn():
     since = int(time.time()) - 36 * 3600
     out = {}
-    for q in ["LLM", "open source model", "local inference", "AI agent", "GPU quantization"]:
-        flt = urllib.parse.quote(f"created_at_i>{since},points>20")
+    for q in ["AI", "LLM", "open source model", "run locally"]:
+        flt = urllib.parse.quote(f"created_at_i>{since},points>50")
         url = (f"https://hn.algolia.com/api/v1/search?query={urllib.parse.quote(q)}"
-               f"&tags=story&numericFilters={flt}&hitsPerPage=10")
+               f"&tags=story&numericFilters={flt}&hitsPerPage=8")
         for h in get_json(url).get("hits", []):
             out[h["objectID"]] = {
                 "source": "HackerNews", "title": h.get("title", ""),
                 "url": h.get("url") or f"https://news.ycombinator.com/item?id={h['objectID']}",
                 "score": h.get("points", 0), "note": ""}
-    return list(out.values())
+    return sorted(out.values(), key=lambda x: -x["score"])[:10]
 
 
 def from_hf_models():
     return [{"source": "HF trending model", "title": m.get("id", ""),
              "url": f"https://huggingface.co/{m.get('id', '')}", "score": m.get("likes", 0),
              "note": f"task={m.get('pipeline_tag')}, downloads={m.get('downloads')}"}
-            for m in get_json("https://huggingface.co/api/models?sort=trendingScore&limit=12")]
+            for m in get_json("https://huggingface.co/api/models?sort=trendingScore&limit=5")]
 
 
 def from_hf_papers():
     out = []
-    for e in get_json("https://huggingface.co/api/daily_papers")[:12]:
+    for e in get_json("https://huggingface.co/api/daily_papers")[:5]:
         p = e.get("paper", {})
         out.append({"source": "HF Papers", "title": p.get("title") or e.get("title", ""),
                     "url": f"https://huggingface.co/papers/{p.get('id', '')}",
@@ -151,15 +159,51 @@ def from_hf_papers():
 
 def from_github_new_repos():
     since = (TODAY - dt.timedelta(days=7)).isoformat()
-    q = urllib.parse.quote(f"topic:llm created:>{since} stars:>50")
+    q = urllib.parse.quote(f"topic:llm created:>{since} stars:>100")
     headers = {"Accept": "application/vnd.github+json"}
     if os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
-    d = get_json(f"https://api.github.com/search/repositories?q={q}&sort=stars&per_page=10",
+    d = get_json(f"https://api.github.com/search/repositories?q={q}&sort=stars&per_page=5",
                  headers=headers)
     return [{"source": "GitHub new repo", "title": r["full_name"], "url": r["html_url"],
              "score": r["stargazers_count"],
              "note": (r.get("description") or "")[:250]} for r in d.get("items", [])]
+
+
+RSS_FEEDS = [
+    ("The Verge AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"),
+    ("TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/"),
+    ("Ars Technica AI", "https://arstechnica.com/ai/feed/"),
+    ("Hugging Face blog", "https://huggingface.co/blog/feed.xml"),
+]
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def _strip(html):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
+
+
+def from_rss():
+    out = []
+    for name, url in RSS_FEEDS:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                root = ET.fromstring(r.read())
+        except Exception as ex:
+            print(f"[warn] rss {name} failed: {ex}", file=sys.stderr)
+            continue
+        items = root.findall(".//item") or root.findall(f".//{ATOM}entry")
+        for it in items[:5]:
+            link = it.findtext("link")
+            if not link:
+                el = it.find(f"{ATOM}link")
+                link = el.get("href") if el is not None else ""
+            desc = it.findtext("description") or it.findtext(f"{ATOM}summary") or ""
+            out.append({"source": name,
+                        "title": _strip(it.findtext("title") or it.findtext(f"{ATOM}title")),
+                        "url": (link or "").strip(), "score": 0, "note": _strip(desc)[:250]})
+    return out
 
 
 TECH_WORDS = ("comput", "software", "internet", "robot", "artificial", "chess", "program",
@@ -190,12 +234,52 @@ def safe(fn):
         return []
 
 
+# -------------------------------------------------------------------- images
+def og_image(page_url):
+    """The page's own preview image (what LinkedIn/Twitter show for the link)."""
+    if not page_url:
+        return None
+    try:
+        req = urllib.request.Request(page_url, headers={"User-Agent": BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            html = r.read(400_000).decode("utf-8", "replace")
+    except Exception:
+        return None
+    for pat in (r'<meta[^>]+property=["\']og:image["\'][^>]*content=["\']([^"\']+)',
+                r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']'):
+        m = re.search(pat, html, re.I)
+        if m:
+            return urllib.parse.urljoin(page_url, m.group(1).replace("&amp;", "&"))
+    return None
+
+
+def fetch_image(page_url):
+    """Return dict(url, data, subtype, credit) or None. Only png/jpeg/gif, max 5 MB."""
+    img_url = og_image(page_url)
+    if not img_url:
+        return None
+    info = {"url": img_url, "data": None, "subtype": None,
+            "credit": urllib.parse.urlparse(page_url).netloc.replace("www.", "")}
+    try:
+        req = urllib.request.Request(img_url, headers={"User-Agent": BROWSER_UA})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            ctype = r.headers.get_content_type()
+            data = r.read(5_000_001)
+        if ctype in ("image/png", "image/jpeg", "image/gif") and len(data) <= 5_000_000:
+            info["data"], info["subtype"] = data, ctype.split("/")[1]
+    except Exception:
+        pass
+    return info
+
+
 # --------------------------------------------------------------------- groq
 STYLE = """You ghostwrite LinkedIn posts for a CS student / junior developer who wants a
-professional, interesting profile. Audience: students and early-career engineers.
+professional, interesting profile. Audience: students and early-career people who are
+tech-curious but are NOT machine-learning specialists.
 
-VOICE: friendly, confident, plain English, like a sharp peer. Professional, never corporate
-or cringe. Short sentences.
+VOICE: friendly, confident, plain English, like a sharp friend explaining something cool.
+Professional, never corporate or cringe. Short sentences. Explain anything technical in
+everyday words.
 
 HARD RULES
 - Never invent facts, numbers, quotes, projects, jobs or personal experiences. Do not write
@@ -214,8 +298,8 @@ Return ONLY a JSON object with keys exactly as requested."""
 
 SCHEMA = ('{"headline": "<6-10 word title, for the email subject>", '
           '"post": "<the full LinkedIn post>", '
-          '"card_text": "<one punchy line, max 110 characters, for an image card>", '
-          '"source_url": "<url or empty string>"}')
+          '"source_url": "<url or empty string>", '
+          '"appeal": <number 1-10, NEWS mode only, else 0>}')
 
 
 def resolve_model():
@@ -279,31 +363,34 @@ _news_cache = {}
 
 def get_news():
     if "n" not in _news_cache:
-        items = (safe(from_hn) + safe(from_hf_models) + safe(from_hf_papers)
-                 + safe(from_github_new_repos))
-        items.sort(key=lambda x: x.get("score", 0), reverse=True)
-        _news_cache["n"] = items[:30]
+        _news_cache["n"] = (safe(from_rss) + safe(from_hn) + safe(from_hf_models)
+                            + safe(from_hf_papers) + safe(from_github_new_repos))
     return _news_cache["n"]
 
 
 def write_post(mode, model):
-    """Return dict(mode, headline, post, card_text, source_url, card_author) or None."""
-    seed = None
+    """Return dict(mode, headline, post, source_url, image_page) or None."""
     quote = None
+    image_page = ""
     if mode == "NEWS":
         news = get_news()
         if not news:
             return None
         task = (
-            "MODE: NEWS. From the items below pick ONE that a student would find genuinely "
-            "amazing: models running on tiny hardware, big speed/size/cost wins, new open "
-            "models, tools they can try today, a paper with a clear plain-English result. "
-            "REJECT corporate news (valuations, hires, funding, lawsuits, partnerships) and "
-            "anything too niche to explain in two lines. If nothing is good, return "
-            '{"headline": "", "post": "", "card_text": "", "source_url": ""}.\n'
+            "MODE: NEWS. Pick ONE item that a tech-curious student (not an ML specialist) "
+            "would understand in 5 seconds and find impressive or useful: something they can "
+            "try today, a big drop in size/cost/speed shown in plain numbers (e.g. 'runs on a "
+            "laptop'), a surprising thing AI just did, or something that changes which skills "
+            "are worth learning.\n"
+            "REJECT: corporate news (valuations, hires, funding, lawsuits, partnerships), "
+            "code forks/patches/library internals, hardware-specific benchmarks, and anything "
+            "whose headline needs jargon (quantization, inference, tokens, kernels) to "
+            "understand. Explain it like to a friend who has never trained a model.\n"
+            "Rate your pick with \"appeal\" 1-10 (10 = a non-technical friend says 'wow'). "
+            "If your best pick is below 7, return an empty post.\n"
             "Structure: hook with the surprising fact; what happened (2-3 lines); why it "
-            "matters to a developer or student (1-2 lines); source URL on its own line; "
-            "question; hashtags.\n\nITEMS:\n" + json.dumps(news, ensure_ascii=False))
+            "matters to the reader (1-2 lines); source URL on its own line; question; "
+            "hashtags.\n\nITEMS:\n" + json.dumps(news, ensure_ascii=False))
     elif mode == "HISTORY":
         hist = safe(from_history)
         if not hist:
@@ -312,22 +399,24 @@ def write_post(mode, model):
             f"MODE: HISTORY. Today is {TODAY:%d %B}. From these 'on this day' items pick the "
             "single most interesting tech/computing/AI one, ideally one that connects to "
             "today's AI world. Write a fun 'On this day' post. Mention how many years ago "
-            "it was (current year is " + str(TODAY.year) + "). Use only the facts given. "
-            "Put the source URL on its own line.\n\nITEMS:\n"
-            + json.dumps(hist, ensure_ascii=False))
+            f"it was (current year is {TODAY.year}). Use only the facts given. Put the "
+            "source URL on its own line.\n\nITEMS:\n" + json.dumps(hist, ensure_ascii=False))
     elif mode == "QUOTE":
         quote = QUOTES[DAY % len(QUOTES)]
+        image_page = f"https://en.wikipedia.org/wiki/{quote[2]}" if quote[2] else ""
         task = (
             f'MODE: QUOTE. Quote: "{quote[0]}" by {quote[1]}.\n'
             "Write a post that opens with the quote in quotation marks plus the author on "
-            "the next line, then 3-4 short lines connecting it to a modern developer's life "
-            "(AI tools, code review, learning, shipping). Do not claim the author said "
-            "anything beyond this quote. card_text must be the quote itself.")
+            "the next line, then 3-4 short lines connecting it to everyday working life for "
+            "ANY job or study (students, teachers, nurses, designers, managers, engineers, "
+            "freelancers). Use a relatable workplace or learning moment. Only mention coding "
+            "or AI if the quote itself is about technology. Do not claim the author said "
+            "anything beyond this quote.")
     else:
         seed = SEEDS[mode][DAY % len(SEEDS[mode])]
         extra = {
             "MOTIVATION": "Write an honest motivational post for students and early-career "
-                          "devs. No fake success stories; use a universal observation or a "
+                          "people. No fake success stories; use a universal observation or a "
                           "simple analogy. Practical, not preachy.",
             "FUNNY": "Write a genuinely funny, relatable developer/AI joke post: a tight "
                      "setup and punchline format (e.g. 'Me: ... / AI: ...' or a numbered "
@@ -342,18 +431,23 @@ def write_post(mode, model):
     r = call_groq(model, task)
     if not r.get("post"):
         return None
-    out = {"mode": mode, "headline": r.get("headline", mode), "post": r["post"].strip(),
-           "card_text": (r.get("card_text") or "").strip(),
-           "source_url": r.get("source_url", ""), "card_author": None}
-    if quote:
-        out["card_text"], out["card_author"] = quote[0], quote[1]
-    return out
+    if mode == "NEWS":
+        try:
+            if float(r.get("appeal", 0)) < 7:
+                print(f"[info] NEWS appeal too low ({r.get('appeal')}), skipping")
+                return None
+        except (TypeError, ValueError):
+            return None
+    src = r.get("source_url", "") or ""
+    if mode in ("NEWS", "HISTORY"):
+        image_page = src
+    return {"mode": mode, "headline": r.get("headline", mode), "post": r["post"].strip(),
+            "source_url": src, "image_page": image_page}
 
 
 def pick_modes():
     forced = (os.environ.get("FORCE_MODE") or "").upper()
-    modes = list(WEIGHTS)
-    pool = {m: w for m, w in WEIGHTS.items()}
+    pool = dict(WEIGHTS)
     order = []
     if forced in WEIGHTS:
         order.append(forced)
@@ -365,71 +459,26 @@ def pick_modes():
     return order  # try in this order until two succeed
 
 
-# ---------------------------------------------------------------- image card
-def _font(size):
-    from PIL import ImageFont
-    for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                 "C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf"):
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    return ImageFont.load_default(size)
-
-
-def make_card(text, author=None):
-    """1080x1080 PNG bytes, or None if Pillow is unavailable."""
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError:
-        return None
-    W = H = 1080
-    pad = 100
-    img = Image.new("RGB", (W, H), (15, 23, 42))
-    d = ImageDraw.Draw(img)
-    d.rectangle([pad, 120, pad + 120, 130], fill=(56, 189, 248))
-    footer = os.environ.get("CARD_FOOTER", "")
-
-    def wrap(font):
-        lines, cur = [], ""
-        for w in text.split():
-            t = (cur + " " + w).strip()
-            if d.textlength(t, font=font) <= W - 2 * pad:
-                cur = t
-            else:
-                lines.append(cur)
-                cur = w
-        lines.append(cur)
-        return lines
-
-    for size in range(84, 35, -4):
-        font = _font(size)
-        lines = wrap(font)
-        if len(lines) * size * 1.35 <= 640:
-            break
-    y = 190
-    for ln in lines:
-        d.text((pad, y), ln, font=font, fill=(241, 245, 249))
-        y += int(size * 1.35)
-    if author:
-        d.text((pad, y + 30), f"- {author}", font=_font(40), fill=(56, 189, 248))
-    if footer:
-        d.text((pad, H - 120), footer, font=_font(34), fill=(148, 163, 184))
-    buf = io.BytesIO()
-    img.save(buf, "PNG")
-    return buf.getvalue()
-
-
 # --------------------------------------------------------------------- email
 def build_email(posts):
     subject = f"[{posts[0]['mode']}] {posts[0]['headline']}"[:120]
     lines = [f"Your LinkedIn drafts for {TODAY:%A, %d %B %Y}", "=" * 50, ""]
     for i, p in enumerate(posts):
-        label = "PRIMARY" if i == 0 else "BACKUP"
+        label = "PRIMARY" if i == 0 else "BACKUP" if i == 1 else f"EXTRA {i - 1}"
         lines += [f"### {label} ({p['mode']}): {p['headline']}", "-" * 50, p["post"], ""]
-        if p.get("card"):
-            lines.append("Image card attached: upload it with the post.")
+        img = p.get("image")
+        if img:
+            note = "attached" if img["data"] else "not attachable, open the link"
+            lines.append(f"Image ({note}): {img['url']}")
+            lines.append(f"Credit: {img['credit']}. Tip: if your post includes the source "
+                         "link, LinkedIn shows this preview image automatically.")
         if p["source_url"]:
             lines.append("Fact-check the source before posting.")
         lines += ["", ""]
+    lines += ["-" * 50,
+              "Want more drafts? GitHub repo -> Actions -> Daily AI LinkedIn draft -> "
+              "Run workflow, then pick how many drafts (up to 6) and optionally a type "
+              "(NEWS, TIP, QUOTE, FUNNY, MOTIVATION, HISTORY). A fresh email arrives in ~1 minute."]
     return subject, "\n".join(lines)
 
 
@@ -440,9 +489,11 @@ def send_email(subject, body, posts):
     msg["To"] = os.environ.get("EMAIL_TO") or user
     msg.set_content(body)
     for i, p in enumerate(posts):
-        if p.get("card"):
-            msg.add_attachment(p["card"], maintype="image", subtype="png",
-                               filename=f"{i + 1}_{p['mode'].lower()}_card.png")
+        img = p.get("image")
+        if img and img["data"]:
+            ext = "jpg" if img["subtype"] == "jpeg" else img["subtype"]
+            msg.add_attachment(img["data"], maintype="image", subtype=img["subtype"],
+                               filename=f"{i + 1}_{p['mode'].lower()}.{ext}")
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as s:
         s.login(user, os.environ["EMAIL_APP_PASSWORD"])
         s.send_message(msg)
@@ -453,7 +504,7 @@ def main():
     print("Using Groq model:", model)
     posts = []
     for mode in pick_modes():
-        if len(posts) == 2:
+        if len(posts) >= POST_COUNT:
             break
         try:
             p = write_post(mode, model)
@@ -463,8 +514,7 @@ def main():
         if not p:
             print(f"[info] {mode}: nothing good today, trying another mode")
             continue
-        if mode in NEEDS_CARD and p["card_text"]:
-            p["card"] = make_card(p["card_text"], p["card_author"])
+        p["image"] = fetch_image(p["image_page"]) if p["image_page"] else None
         posts.append(p)
     if not posts:
         sys.exit("No post could be generated")
@@ -472,10 +522,6 @@ def main():
     subject, body = build_email(posts)
     if DRY_RUN:
         print(subject, "\n", body)
-        for i, p in enumerate(posts):
-            if p.get("card"):
-                with open(f"dryrun_{i + 1}_{p['mode'].lower()}.png", "wb") as f:
-                    f.write(p["card"])
     else:
         send_email(subject, body, posts)
         print("Email sent:", subject, "| modes:", [p["mode"] for p in posts])

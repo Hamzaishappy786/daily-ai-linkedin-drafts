@@ -4,7 +4,16 @@ on:
   schedule:
     # GitHub cron is UTC. 14:00 UTC = 19:00 PKT (7pm). Change if you're elsewhere.
     - cron: "0 14 * * *"
-  workflow_dispatch: # lets you press "Run workflow" manually to test
+  workflow_dispatch: # press "Run workflow" manually to get more drafts
+    inputs:
+      count:
+        description: "How many drafts (1-6)"
+        default: "2"
+      mode:
+        description: "Force a type (optional)"
+        type: choice
+        default: "RANDOM"
+        options: [RANDOM, NEWS, TIP, QUOTE, FUNNY, MOTIVATION, HISTORY]
 
 permissions:
   contents: read
@@ -18,8 +27,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Pillow (for image cards)
-        run: pip install pillow
       - name: Generate drafts and email them
         run: python scripts/daily_post.py
         env:
@@ -28,5 +35,5 @@ jobs:
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: text shown at the bottom of image cards (your name / handle)
-          CARD_FOOTER: ""
+          POST_COUNT: ${{ inputs.count }}
+          FORCE_MODE: ${{ inputs.mode }}

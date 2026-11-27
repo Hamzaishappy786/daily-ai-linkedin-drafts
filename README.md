@@ -6,44 +6,41 @@ You copy, check, post.
 
 ## Modes (random, weighted)
 
-| Mode | What you get | Image card |
+| Mode | What you get | Real image from |
 |---|---|---|
-| NEWS | Relatable AI/dev news from Hacker News, Hugging Face (models + papers), new GitHub repos. Corporate news is rejected. | no |
-| TIP | Practical beginner-friendly dev/AI tip | yes |
-| QUOTE | Real quote from a computing legend + modern take (quotes are hard-coded, never invented) | yes |
-| FUNNY | Relatable developer/AI humour | yes |
-| MOTIVATION | Honest motivation for students/early-career devs | yes |
-| HISTORY | "On this day" in tech/AI (Wikipedia) | no |
+| NEWS | Mainstream-friendly AI/tech news (The Verge, TechCrunch, Ars, Hugging Face, Hacker News, new GitHub repos). Corporate and jargon-heavy items are rejected; the model must rate "wow factor" 7+/10 or the mode is skipped. | the article's own preview image |
+| TIP | Practical beginner-friendly dev/AI tip | none (text) |
+| QUOTE | Real quote from a computing legend + modern take (quotes are hard-coded, never invented) | author's Wikipedia photo |
+| FUNNY | Relatable developer/AI humour | none (text) |
+| MOTIVATION | Honest motivation for students/early-career people | none (text) |
+| HISTORY | "On this day" in tech/AI (Wikipedia) | the Wikipedia page's image |
 
-Image cards are 1080x1080 PNGs attached to the email. Upload them with the post.
-If a mode has nothing good that day (e.g. a dull news day) the script tries another mode.
+Images are the sources' own preview pictures, attached to the email (png/jpg/gif only).
+Easiest way to use them: include the source link in your LinkedIn post and LinkedIn shows
+the preview image by itself. If you reuse a picture separately, credit the source
+(Wikipedia photos: credit Wikimedia Commons).
+
+Instagram is not used: it blocks automated access and Google's search API is closed to new projects.
 
 ## Setup
 
 Repo secrets (Settings -> Secrets and variables -> Actions):
 `GROQ_API_KEY`, `EMAIL_USER`, `EMAIL_APP_PASSWORD` (Gmail app password), `EMAIL_TO`.
-(The old `GOOGLE_*` secrets are no longer used; you can delete them.)
-
 Test: Actions tab -> "Daily AI LinkedIn draft" -> Run workflow.
 
 ## Customising
 
-- Put your name on image cards: set `CARD_FOOTER: "Your Name"` in the workflow file.
-- Change mode frequency: edit `WEIGHTS` in the script.
-- Add quotes / topics: edit `QUOTES` and `SEEDS` in the script.
-- Change the voice or banned words: edit `STYLE` in the script.
-- Test one mode: set `FORCE_MODE` (e.g. `QUOTE`) in the workflow env, then Run workflow.
+- Mode frequency: `WEIGHTS` in the script. Quotes/topics: `QUOTES` and `SEEDS`.
+- Voice and banned words: `STYLE`. News strictness: the NEWS task text and the `appeal` threshold (7).
+- News sources: `RSS_FEEDS` and the `from_*` functions.
+- Test one mode: add `FORCE_MODE: "QUOTE"` under `env:` in the workflow, then Run workflow.
 - Cron is UTC (`0 14 * * *` = 7pm PKT). GitHub may delay runs 5-30 minutes.
 - GitHub disables scheduled workflows after 60 days without repo activity; click
   "Enable workflow" if emails stop.
 
-## Making the profile look professional (the posts are only half of it)
+## Making the profile look professional
 
-- Headline: say what you do and what you're into, not just "Student at X".
-  Example: "CS student | building with LLMs & Python | sharing what I learn".
-- Profile photo: clear face, plain background. Add a simple banner (name + 3 skills).
-- About section: 3-4 short lines (what you build, what you're learning, how to reach you).
-- Featured section: pin your best GitHub projects.
-- Post 3-4 times a week, not 7. Quality and consistency beat volume.
-- Reply to every comment in the first hour, and comment on 3-5 other people's posts daily.
+- Headline: what you do + what you're into, e.g. "CS student | building with LLMs & Python | sharing what I learn".
+- Clear profile photo, simple banner, a 3-4 line About, best GitHub projects in Featured.
+- Post 3-4 times a week, not 7. Reply to comments in the first hour; comment on 3-5 other posts daily.
 - Always read the draft and the source before posting, and edit it to sound like you.
