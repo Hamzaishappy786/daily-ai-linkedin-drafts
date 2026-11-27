@@ -1,61 +1,49 @@
-# Daily AI -> LinkedIn draft (emailed to you)
+# Daily LinkedIn drafts (emailed to you)
 
-Every day at 7pm PKT, GitHub Actions runs `scripts/daily_post.py`:
-Hacker News + Hugging Face (trending models, daily papers) + Wikipedia "on this day"
--> Groq picks the most relatable story and writes drafts -> you get an email -> you post.
+Every day at 7pm PKT, GitHub Actions runs `scripts/daily_post.py`. It picks random content
+modes, has Groq write a LinkedIn post for each, and emails you the best two (PRIMARY + BACKUP).
+You copy, check, post.
 
-Each email has two drafts:
-- PRIMARY: real AI news (efficiency wins, new open models, papers explained simply),
-  or, if the news is weak that day (strength < 6), the fun "on this day in tech" post.
-- BACKUP: the other one.
+## Modes (random, weighted)
 
-## Setup (all done in the GitHub website, no commands needed)
+| Mode | What you get | Image card |
+|---|---|---|
+| NEWS | Relatable AI/dev news from Hacker News, Hugging Face (models + papers), new GitHub repos. Corporate news is rejected. | no |
+| TIP | Practical beginner-friendly dev/AI tip | yes |
+| QUOTE | Real quote from a computing legend + modern take (quotes are hard-coded, never invented) | yes |
+| FUNNY | Relatable developer/AI humour | yes |
+| MOTIVATION | Honest motivation for students/early-career devs | yes |
+| HISTORY | "On this day" in tech/AI (Wikipedia) | no |
 
-1. **Create a repo** (private is fine) and upload this folder's contents:
-   `.github/workflows/daily-post.yml`, `scripts/daily_post.py`, `README.md`.
-2. **Gmail app password** (needed so the script can send mail):
-   Google Account -> Security -> turn on 2-Step Verification -> search "App passwords"
-   -> create one -> copy the 16-character code.
-3. **Add repo secrets**: repo -> Settings -> Secrets and variables -> Actions -> New repository secret:
+Image cards are 1080x1080 PNGs attached to the email. Upload them with the post.
+If a mode has nothing good that day (e.g. a dull news day) the script tries another mode.
 
-   | Name | Value |
-   |---|---|
-   | `GROQ_API_KEY` | your Groq key |
-   | `EMAIL_USER` | your Gmail address (sender) |
-   | `EMAIL_APP_PASSWORD` | the 16-char app password |
-   | `EMAIL_TO` | where to receive drafts (can be the same Gmail) |
+## Setup
 
-4. **Test now**: repo -> Actions tab -> "Daily AI LinkedIn draft" -> Run workflow.
-   Email should arrive in about a minute (check spam the first time).
+Repo secrets (Settings -> Secrets and variables -> Actions):
+`GROQ_API_KEY`, `EMAIL_USER`, `EMAIL_APP_PASSWORD` (Gmail app password), `EMAIL_TO`.
+(The old `GOOGLE_*` secrets are no longer used; you can delete them.)
 
-## Optional: Instagram as a source (via Google)
+Test: Actions tab -> "Daily AI LinkedIn draft" -> Run workflow.
 
-1. https://programmablesearchengine.google.com -> Add -> "Search specific sites" -> add
-   `instagram.com/*` -> create. Copy the **Search engine ID** (`cx`).
-2. Google Cloud Console -> enable "Custom Search API" -> Credentials -> create an API key.
-3. Add repo secrets `GOOGLE_API_KEY` and `GOOGLE_CSE_ID`.
+## Customising
 
-Limits: 100 free queries/day (the script uses 4), Google only indexes some Instagram
-posts, snippets are short, and Google may not offer this API to new accounts anymore.
-If it isn't available, the script silently skips it. Images arrive as links, not
-attachments: open the post, and credit the creator when you reuse their picture.
+- Put your name on image cards: set `CARD_FOOTER: "Your Name"` in the workflow file.
+- Change mode frequency: edit `WEIGHTS` in the script.
+- Add quotes / topics: edit `QUOTES` and `SEEDS` in the script.
+- Change the voice or banned words: edit `STYLE` in the script.
+- Test one mode: set `FORCE_MODE` (e.g. `QUOTE`) in the workflow env, then Run workflow.
+- Cron is UTC (`0 14 * * *` = 7pm PKT). GitHub may delay runs 5-30 minutes.
+- GitHub disables scheduled workflows after 60 days without repo activity; click
+  "Enable workflow" if emails stop.
 
-## Good to know
+## Making the profile look professional (the posts are only half of it)
 
-- Cron is UTC. `0 14 * * *` = 7pm Pakistan time. GitHub often delays scheduled runs by
-  5-30 minutes, so the email lands around 7:00-7:30pm.
-- GitHub disables scheduled workflows after 60 days without repo activity. If emails
-  stop, open Actions and click "Enable workflow" (or make any small commit).
-- Failed runs email you automatically from GitHub.
-- Change the Groq model without editing code: add a `GROQ_MODEL` env line in the workflow.
-- Tweak tone, topics or length in the `SYSTEM` prompt in `scripts/daily_post.py`.
-- Always glance at the source link before posting; the model is told not to invent facts,
-  but you're the one whose name is on it.
-
-## Optional local test (PowerShell)
-
-```powershell
-$env:GROQ_API_KEY = "gsk_..."
-$env:DRY_RUN = "1"
-python scripts/daily_post.py
-```
+- Headline: say what you do and what you're into, not just "Student at X".
+  Example: "CS student | building with LLMs & Python | sharing what I learn".
+- Profile photo: clear face, plain background. Add a simple banner (name + 3 skills).
+- About section: 3-4 short lines (what you build, what you're learning, how to reach you).
+- Featured section: pin your best GitHub projects.
+- Post 3-4 times a week, not 7. Quality and consistency beat volume.
+- Reply to every comment in the first hour, and comment on 3-5 other people's posts daily.
+- Always read the draft and the source before posting, and edit it to sound like you.
