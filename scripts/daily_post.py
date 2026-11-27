@@ -236,25 +236,41 @@ def resolve_model():
 
 
 def call_groq(model, task, temperature=0.8):
-    body = json.dumps({
-        "model": model, "temperature": temperature,
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "system", "content": STYLE},
-                     {"role": "user", "content": task + "\n\nReturn JSON: " + SCHEMA}],
-    }).encode()
-    req = urllib.request.Request(
-        "https://api.groq.com/openai/v1/chat/completions", data=body,
-        headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
-                 "Content-Type": "application/json", "User-Agent": UA})
+    last_err = None
     for attempt in range(4):
+        strict = attempt < 3  # final attempt: no strict JSON mode, extract JSON ourselves
+        payload = {
+            "model": model, "temperature": temperature, "max_completion_tokens": 4096,
+            "messages": [{"role": "system", "content": STYLE},
+                         {"role": "user", "content": task + "\n\nReturn JSON: " + SCHEMA}],
+        }
+        if strict:
+            payload["response_format"] = {"type": "json_object"}
+        if "gpt-oss" in model:
+            payload["reasoning_effort"] = "low"
+        req = urllib.request.Request(
+            "https://api.groq.com/openai/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}",
+                     "Content-Type": "application/json", "User-Agent": UA})
         try:
             with urllib.request.urlopen(req, timeout=90) as r:
-                return json.loads(json.load(r)["choices"][0]["message"]["content"])
+                text = json.load(r)["choices"][0]["message"]["content"] or ""
+            start, end = text.find("{"), text.rfind("}")
+            return json.loads(text[start:end + 1])
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 503) and attempt < 3:
+            detail = e.read().decode()[:300]
+            last_err = f"Groq error {e.code}: {detail}"
+            if e.code in (429, 500, 503):
                 time.sleep(10 * (attempt + 1))
-                continue
-            raise RuntimeError(f"Groq error {e.code}: {e.read().decode()[:300]}")
+            elif e.code == 400 and "json_validate_failed" in detail:
+                time.sleep(2)
+            else:
+                raise RuntimeError(last_err)
+        except ValueError as e:  # empty or unparsable reply
+            last_err = f"Bad JSON from model: {e}"
+            time.sleep(2)
+    raise RuntimeError(last_err)
 
 
 # -------------------------------------------------------------- mode writers
